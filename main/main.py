@@ -261,159 +261,161 @@ def info(text):
 print("Initializaation complete")
 
 def front_end():
-    try:
-        global current_app
-        global fb
+#     try:
+    global current_app
+    global fb
+    
+    tim = Time(rtc.datetime())
+    
+    fb.fill(TFT.BLACK)
+    
+    notifed = False
+    
+    #notif loop
+    
+    for i in apps:
+        messages = message_in_queue[i.name]
+        message_in_queue[i.name] = []
+        notifs = i.notif(messages, tim)
         
-        tim = Time(rtc.datetime())
+        for notif in notifs:
+            notif_queue.append([i.name, notif])
         
-        fb.fill(TFT.BLACK)
+        if notifs != []: notifed = True
+    
+    if notifed and switches["buzz"].value() == 0:
+        for i in range(2):
+            buzzer.duty_u16(30000)
+            time.sleep(.25)
+            buzzer.duty_u16(0)
+            time.sleep(.25)
         
-        notifed = False
+    #show notifs
+    
+    if notif_queue != [] and switches["notif"].value() == 0:
         
-        #notif loop
+        fb.blit(notif_bar(notif_queue[0][0], notif_queue[0][1]), 0, 10)
         
-        for i in apps:
-            messages = message_in_queue[i.name]
-            message_in_queue[i.name] = []
-            notifs = i.notif(messages, tim)
-            
-            for notif in notifs:
-                notif_queue.append([i.name, notif])
-            
-            if notifs != []: notifed = True
+        pk = {i.key: i.update() for i in fancy_keys}
         
-        if notifed and switches["buzz"].value() == 0:
-            for i in range(2):
-                buzzer.duty_u16(30000)
-                time.sleep(.25)
-                buzzer.duty_u16(0)
-                time.sleep(.25)
-            
-        #show notifs
+        if pk["*"]:
+            notif_queue.append(notif_queue.pop(0))
         
-        if notif_queue != [] and switches["notif"].value() == 0:
-            
-            fb.blit(notif_bar(notif_queue[0][0], notif_queue[0][1]), 0, 10)
-            
-            pk = {i.key: i.update() for i in fancy_keys}
-            
-            if pk["*"]:
-                notif_queue.append(notif_queue.pop(0))
-            
-            elif pk["#"]:
-                notif_queue.pop(0)
+        elif pk["#"]:
+            notif_queue.pop(0)
+    
+    #home screen
+    
+    elif current_app == None:
         
-        #home screen
+        for index, value in enumerate(apps):
+            fb.blit(value.icon, APP_ORIGIN_CORDS[index][0], APP_ORIGIN_CORDS[index][1])
         
-        elif current_app == None:
-            
-            for index, value in enumerate(apps):
-                fb.blit(value.icon, APP_ORIGIN_CORDS[index][0], APP_ORIGIN_CORDS[index][1])
-            
-            pk = {i.key: i.update() for i in fancy_keys}
-            
-            for key, value in pk.items():
-                if key not in ["*", "#"]:
-                    if int(key) <= len(apps) and value == True:
-                        current_app = apps[int(key)-1]
-                        current_app.begin()
-                        break
+        pk = {i.key: i.update() for i in fancy_keys}
         
-        #in-app              
+        for key, value in pk.items():
+            if key not in ["*", "#"]:
+                if int(key) <= len(apps) and value == True:
+                    current_app = apps[int(key)-1]
+                    current_app.begin()
+                    break
+    
+    #in-app              
+    
+    else:
+        main_response = current_app.main(AppButtons([keypad.pressed_keys, buttons, specials["shift"]]), fb, tim)
+        fb = main_response.fb
         
-        else:
-            main_response = current_app.main(AppButtons([keypad.pressed_keys, buttons, specials["shift"]]), fb, tim)
-            fb = main_response.fb
-            
-            messages = main_response.messages
-            
-            for i in messages:
-                if i[2] == 0:
-                    message = Message(DEVICE_ID, MSG_DIRECT, i.receiver, i.text, wlan.isconnected() and RICK_MODE, "00", tim.tup(), rand_id(), current_app.name)
-                    sx.send(message_bytes(message))
-                else:
-                    message_out_queue.append(SecondaryMessage(i.receiver, i.text, tim.tup(), rand_id(), current_app.name))
-            
-            if switches["buzz"].value() == 0:
-                buzz = main_response.buzz
-                buzzer.freq(buzz[1])
-                buzzer.duty_u16(buzz[0])
+        messages = main_response.messages
+        
+        for i in messages:
+            if i.kind == 0:
+                message = Message(DEVICE_ID, MSG_DIRECT, i.receiver, i.text, wlan.isconnected() and RICK_MODE, "00", tim.tup(), rand_id(), current_app.name)
+                sx.send(message_bytes(message))
             else:
-                buzzer.duty_u16(0)
-            
-            if specials["home"].value() == 0:
-                current_app.end()
-                current_app = None
-                fb.fill(TFT.BLACK)
+                message_out_queue.append(SecondaryMessage(i.receiver, i.text, tim.tup(), rand_id(), current_app.name))
         
-        fb.blit(top_bar(), 0, 0)
-        tft._writedata(buf)
-    except:
-        pass
+        if switches["buzz"].value() == 0:
+            buzz = main_response.buzz
+            buzzer.freq(buzz[1])
+            buzzer.duty_u16(buzz[0])
+        else:
+            buzzer.duty_u16(0)
+        
+        if specials["home"].value() == 0:
+            current_app.end()
+            current_app = None
+            fb.fill(TFT.BLACK)
+    
+    fb.blit(top_bar(), 0, 0)
+    tft._writedata(buf)
+#     except:
+#         pass
 
 def back_end():
-    try:
-        global start_time
-        global pings
+    #try:
+    global start_time
+    global pings
+    
+    tim = Time(rtc.datetime())
+    
+    if time.ticks_diff(time.ticks_ms(), start_time) >= 5000:
+        start_time = time.ticks_ms()
         
-        tim = Time(rtc.datetime())
+        #persistent messages
+    
+        for i in message_out_queue:
+            if i.receiver in pings:
+                message = Message(DEVICE_ID, MSG_DIRECT, i.receiver, i.text, wlan.isconnected() and RICK_MODE, "00", i.tim, i.ident, i.app)
+                sx.send(message_bytes(message))
+            else:
+                for key, value in pings.items():
+                    if value == True:
+                        message = Message(DEVICE_ID, MSG_INTERNET, i.receiver, i.text, wlan.isconnected() and RICK_MODE, key, i.tim, i.ident, i.app)
+                        sx.send(message_bytes(message))
+                        break
         
-        if time.ticks_diff(time.ticks_ms(), start_time) >= 5000:
-            start_time = time.ticks_ms()
-            
-            #persistent messages
-        
-            for i in message_out_queue:
-                if i.receiver in pings:
-                    message = Message(DEVICE_ID, MSG_DIRECT, i.receiver, i.text, wlan.isconnected() and RICK_MODE, "00", i.tim, i.ident, i.app)
-                    sx.send(message_bytes(message))
-                else:
-                    for key, value in pings.items():
-                        if value == True:
-                            message = Message(DEVICE_ID, MSG_INTERNET, i.receiver, i.text, wlan.isconnected() and RICK_MODE, key, i.tim, i.ident, i.app)
-                            sx.send(message_bytes(message))
-                            break
-            
-            #pings
-            pings = {}
-            message = Message(DEVICE_ID, MSG_PING, "00", "", wlan.isconnected() and RICK_MODE, "00", tim.tup(), rand_id(), "")
-            sx.send(message_bytes(message))
-    except:
-        pass
+        #pings
+        pings = {}
+        message = Message(DEVICE_ID, MSG_PING, "00", "", wlan.isconnected() and RICK_MODE, "00", tim.tup(), rand_id(), "")
+        sx.send(message_bytes(message))
+#     except:
+#         pass
 
 while True:
-    try:
-        if specials["power"].value() == 0:
-            if current_app is not None: current_app.end()
-            print("going to sleep")
-            esp32.wake_on_ext0(pin = specials["power"], level = esp32.WAKEUP_ANY_HIGH)
-            time.sleep(1)
-            
-            deepsleep()
+#     try:
+    if specials["power"].value() == 0:
+        if current_app is not None: current_app.end()
+        print("going to sleep")
+        esp32.wake_on_ext0(pin = specials["power"], level = esp32.WAKEUP_ANY_HIGH)
+        time.sleep(1)
         
-        front_end()
-        back_end()
-        
-        if switches["wifi"].value() == 0:
-            wlan.active(True)
-            connect_wifi()
-        else:
-            wlan.active(False)
-        
-        time_list = Time(rtc.datetime())
-        if time_list.min % 30 == 0 and time_list.sec in [0, 1, 2]:
-            new_time()
-            print("Time has been calibrated")
+        deepsleep()
     
-    except Exception as e:
-        if e is not KeyboardInterrupt:
-            if current_app is not None: current_app.end()
-            print("going to sleep")
-            esp32.wake_on_ext0(pin = specials["power"], level = esp32.WAKEUP_ANY_HIGH)
-            time.sleep(1)
-            
-            deepsleep()
+    front_end()
+    back_end()
+    
+    if switches["wifi"].value() == 0:
+        wlan.active(True)
+        connect_wifi()
+    else:
+        wlan.active(False)
+    
+    time_list = Time(rtc.datetime())
+    if time_list.min % 30 == 0 and time_list.sec in [0, 1, 2]:
+        new_time()
+        print("Time has been calibrated")
+    
+#     except Exception as e:
+#         if e is not KeyboardInterrupt:
+#             if current_app is not None: current_app.end()
+#             print
+#             print("going to sleep")
+#             esp32.wake_on_ext0(pin = specials["power"], level = esp32.WAKEUP_ANY_HIGH)
+#             time.sleep(1)
+#             
+#             deepsleep()
+
 
 
 
