@@ -39,8 +39,3 @@ class test:
 
 def get_class():
     return(test)
-
-
-
-
-
