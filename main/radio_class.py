@@ -1,4 +1,8 @@
 import json
+from ST7735 import TFTColor
+
+def color(r, g, b):
+    return(TFTColor(b, r, g))
 
 class BluberryApp:
     name = ""
@@ -163,3 +167,4 @@ class AppReturn:
         self.fb = fb
         self.messages = messages
         self.buzz = buzz
+
