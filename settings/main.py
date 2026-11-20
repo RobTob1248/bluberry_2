@@ -5,6 +5,8 @@ import tcp_udp
 import json
 import random
 import requests as urq
+import sys
+import os
 
 def generate_key():
     key = ""
@@ -39,6 +41,110 @@ def parse_link(response):
     link = response[start:end]
     
     return link
+
+def change_file(app, file, directory = "/"):
+    new_file = urq.get(f"https://raw.githubusercontent.com/RobTob1248/bluberry_2/refs/heads/main/{app}/{file}")
+    
+    with open(directory + app + "_" + file, "w") as file:
+        file.write(new_file.text)
+    
+    new_file.close()
+
+def install_app(app):
+    try:
+        response = urq.get(f"https://raw.githubusercontent.com/RobTob1248/bluberry_2/refs/heads/main/{app}/info.json")
+        info = json.loads(response.text)
+        response.close()
+        
+        change_file(app, "info.json", "/apps/")
+        change_file(app, "main.py", "/apps/")
+        
+        for i in info["supp_get"]:
+            change_file(app, i, "/apps/")
+        
+        with open("app_list.json", "r") as file:
+            old_apps = json.loads(file.read())
+            old_apps.append(app)
+        
+        with open("app_list.json", "w") as file:
+            file.write(json.dumps(old_apps))
+    except:
+        pass
+    
+class AppManager:
+    def get_apps():
+        with open("app_list.json", "r") as file:
+            return json.loads(file.read())
+    
+    @classmethod
+    def get_apps_pretty(cls):
+        old_text = json.dumps(cls.get_apps())
+        for i in "[]{}()'\"":
+            old_text = old_text.replace(i, "")
+        
+        old_text = old_text.replace(", ", "<br>")
+        
+        return old_text
+    
+    @classmethod
+    def install_app(cls, app):
+        try:
+            if app == "settings":
+                raise Exception("You can't install settings!")
+            
+            response = urq.get(f"https://raw.githubusercontent.com/RobTob1248/bluberry_2/refs/heads/main/{app}/info.json")
+            info = json.loads(response.text)
+            response.close()
+            
+            print("Installing info.json")
+            change_file(app, "info.json", "/apps/")
+            print("Installed info.json")
+            
+            print("Installing main.py")
+            change_file(app, "main.py", "/apps/")
+            print("Installed main.py")
+            
+            for i in info["supp_get"]:
+                print(f"Installing {i}")
+                change_file(app, i, "/apps/")
+                print(f"Installed {i}")
+    
+            old_apps = cls.get_apps()
+            old_apps.append(app)
+            
+            with open("app_list.json", "w") as file:
+                file.write(json.dumps(old_apps))
+            
+            print(f"Successfuly installed {app}")
+        except Exception as e:
+            print(f"Installation of {app} failed")
+            sys.print_exception(e)
+    
+    @classmethod
+    def delete_app(cls, app):
+        try:
+            if app == "settings":
+                raise Exception("You can't delete settings!")
+            
+            all_files = os.listdir("/apps/")
+            app_files = []
+            
+            for i in all_files:
+                if i[:len(app + "_")] == app + "_":
+                    print(f"Deleting {i[len(app + "_"):]}")
+                    os.remove("/apps/" + i)
+                    print(f"Deleted {i[len(app + "_"):]}")
+            
+            old_apps = cls.get_apps()
+            old_apps.remove(app)
+            
+            with open("app_list.json", "w") as file:
+                file.write(json.dumps(old_apps))
+            
+            print(f"Successfuly deleted {app}")
+        except Exception as e:
+            print(f"Deletion of {app} failed")
+            sys.print_exception(e)
 
 class WifiManager:
     def get_networks():
@@ -77,55 +183,48 @@ class WifiManager:
             file.write(new)
 
 class html:
-#     def app_html():
-#         response = urq.get("https://raw.githubusercontent.com/RobTob1248/bluberry_2/refs/heads/main/app_list.json")
-#         all_apps = response.text
-#         
-#         for i in "[]{}()'\"":
-#             all_apps = all_apps.replace(i, "")
-#         
-#         all_apps = all_apps.replace(", ", "<br>")
-#         
-#         
-#         html = f"""
-#         <!DOCTYPE html>
-#         <html>
-#         <head><title>Bluberry Settings</title></head>
-#         <body>
-#         <center>
-#             <a href="/"><h1>Bluberry Settings</h1></a>
-#             
-#             <a href="/app"><h2>App Settings</h2></a>
-#             
-#             <h3>Availible Apps</h3>
-#                 <p>{all_apps}</p>
-#             
-#             <br>
-#             
-#             <h3>New App</h3>
-#                 <form action="/" method="GET">
-#                     <input type="text" name="app_name" placeholder="Type your app name.">
-#                     <input type="submit" value="Send">
-#                 </form>
-#                 
-#             <br>
-#             
-#             <h3>Current Apps</h3>
-#                 <p>{WifiManager.get_networks_pretty()}</p>
-#             
-#             <br>
-#             
-#             <h3>Delete Network</h3>    
-#                 <form action="/" method="GET">
-#                     <input type="text" name="old_ssid" placeholder="Type your wifi ssid.">
-#                     <input type="submit" value="Send">
-#                 </form>
-#         </center>
-#         </body>
-#         </html>
-#         """
-#         
-#         return html
+    def app_html():
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head><title>Bluberry Settings</title></head>
+        <body>
+        <center>
+            <a href="/"><h1>Bluberry Settings</h1></a>
+            
+            <a href="/apps"><h2>App Settings</h2></a>
+            <h3>New App</h3>
+                <form action="/" method="GET">
+                    <input type="text" name="app_name" placeholder="Type your app name.">
+                    <input type="submit" value="Send">
+                </form>
+                
+            <br>
+            
+            <h3>Current Apps</h3>
+                <p>{AppManager.get_apps_pretty()}</p>
+            
+            <br>
+            
+            <h3>Delete App</h3>    
+                <form action="/" method="GET">
+                    <input type="text" name="old_app" placeholder="Type your wifi ssid.">
+                    <input type="submit" value="Send">
+                </form>
+        </center>
+        </body>
+        </html>
+        """
+        
+        response = (
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/html\r\n"
+            f"Content-Length: {len(html)}\r\n"
+            "Connection: close\r\n\r\n"
+            + html
+            )
+        
+        return response
     
     def wifi_html():
         html = f"""
@@ -183,6 +282,7 @@ class html:
             
             <a href="/wifi"><h2>Wifi Settings</h2></a>
             
+            <a href="/apps"><h2>App Settings</h2></a>
         </center>
         </body>
         </html>
@@ -292,6 +392,14 @@ class Settings:
                         if "old_ssid" in info.keys():
                             WifiManager.del_network(info["old_ssid"])
                             cls.s.sendall(html.wifi_html())
+                        
+                        if "app_name" in info.keys():
+                            AppManager.install_app(info["app_name"])
+                            cls.s.sendall(html.app_html())
+                        
+                        if "old_app" in info.keys():
+                            AppManager.delete_app(info["old_app"])
+                            cls.s.sendall(html.app_html())
                     
                     elif "GET /favicon.ico" in response:
                         with open("favicon.ico", "rb") as f:
@@ -312,6 +420,9 @@ class Settings:
                         
                         elif link == "wifi":
                             cls.s.sendall(html.wifi_html())
+                        
+                        elif link == "apps":
+                            cls.s.sendall(html.app_html())
                 
 #                 else:
 #                     cls.s.sendall(html.home_html())
