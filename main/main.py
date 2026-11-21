@@ -155,17 +155,17 @@ except:
 def new_time():
     try:
         if wlan.isconnected():
-            response = urq.get("https://io.adafruit.com/api/v2/Robert22G/integrations/time/struct", headers = {"tz": "America/New_York", "X-AIO-KEY": "aio_vFxr93GH39XXNtihPRO2LQYaOaOP"})
+            with open("main_aio_key.txt", "r") as file:
+                key = file.read()
+            
+            response = urq.get("https://io.adafruit.com/api/v2/Robert22G/integrations/time/struct", headers = {"tz": "America/New_York", "X-AIO-KEY": key})
             tim = json.loads(response.text)
 
             rtc.init((tim["year"], tim["mon"], tim["mday"], tim["hour"], tim["min"], tim["sec"], 0, 0))
     except:
         pass
 
-try:
-    new_time()
-except:
-    pass
+new_time()
 
 def wifi_symbol(color):
     fb = FrameBuffer(bytearray(7*7*2), 7, 7, RGB565)
@@ -434,6 +434,7 @@ while True:
         if e is not KeyboardInterrupt:
             sys.print_exception(e)
             sleep()
+
 
 
 
