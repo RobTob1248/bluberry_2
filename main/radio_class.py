@@ -167,4 +167,3 @@ class AppReturn:
         self.fb = fb
         self.messages = messages
         self.buzz = buzz
-
