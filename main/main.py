@@ -16,6 +16,19 @@ import mcp23017
 import mcp_matrixkeypad
 import esp32
 
+#battery init
+adc = ADC(Pin(1))
+adc.width(ADC.WIDTH_12BIT)
+adc.atten(ADC.ATTN_11DB)
+
+def bat_volt():
+    return (adc.read() / 4095.0) * 6.6
+
+bat_level = min(round(round((((bat_volt()-3.2)/(4.0 - 3.2))*100)/5)*5), 100)
+
+if bat_level <= 20:
+    sleep()
+
 #screen init
 lit = Pin(12, Pin.OUT)
 lit.value(1)
@@ -70,19 +83,14 @@ specials = {"power": Pin(15, Pin.IN), "home": Pin(36, Pin.IN, Pin.PULL_UP), "shi
 #buzzer init
 buzzer = PWM(Pin(35), freq = 100, duty_u16 = 0)
 
-
-#battery init
-adc = ADC(Pin(1))
-adc.width(ADC.WIDTH_12BIT)
-adc.atten(ADC.ATTN_11DB)
-
 #rtc init
 rtc = RTC()
 
 # wifi init
-wlan = WLAN(WLAN.IF_STA)
+wlan = WLAN(WLAN.IF_STA) 
 if switches["wifi"].value() == 0:
     wlan.active(True)
+    wlan.config(pm=wlan.PM_NONE)
 else:
     wlan.active(False)
 
@@ -97,11 +105,13 @@ for i in app_names:
     app = __import__("/apps/" + app_name, [""])
     apps.append(app.get_class())
     
-DEVICE_ID = "15"
-APP_ORIGIN_CORDS = [(13, 18), (63, 18), (93, 18),
-                    (13, 56), (63, 56), (93, 56),
-                    (13, 94), (63, 94), (93, 94),
-                              (63, 132)]
+with open("/apps/settings_id.txt", "r") as file:
+    DEVICE_ID = file.read()
+
+APP_ORIGIN_CORDS = [(9, 18), (48, 18), (87, 18),
+                    (9, 56), (48, 56), (87, 56),
+                    (9, 94), (48, 94), (87, 94),
+                             (48, 132)]
 
 RICK_MODE = False
 MSG_DIRECT = "0"
@@ -119,7 +129,7 @@ start_time = time.ticks_ms()
 
 def connect_wifi():
     if not wlan.isconnected():
-        with open("passwords.json", "r") as file:
+        with open("/apps/settings_passwords.json", "r") as file:
             passwords = json.loads(file.read())
         
         avail_networks = set([i[0].decode() for i in wlan.scan()])
@@ -183,7 +193,7 @@ def top_bar():
     time_str = str(time_list[3]) + ":" + str(time_list[4])
     fb.text(time_str, 1, 1, TFT.WHITE)
 
-    bat_level = min(round(round((((bat_volt()-3.3)/(4.0 - 3.3))*100)/5)*5), 100)
+    bat_level = min(round(round((((bat_volt()-3.2)/(4.0 - 3.2))*100)/5)*5), 100)
     
     fb.text(str(bat_level) + "%", 95, 1, TFT.WHITE)
 
@@ -216,9 +226,6 @@ def notif_bar(app, text):
     fb.text(text, round(64-(text_length/2)), origin_cord, TFT.WHITE)
     
     return fb
-
-def bat_volt():
-    return (adc.read() / 4095.0) * 6.6
 
 def cb(events):
     try:
@@ -256,6 +263,21 @@ def rand_id():
 
 def info(text):
     notif_queue.append(["System", str(text)])
+
+def sleep():
+    if current_app is not None: current_app.end()
+    print("going to sleep")
+    lit.off()
+    spi.deinit()
+    i2c.deinit()
+    sx.sleep(retainConfig=False)
+    if wlan.active():
+        wlan.disconnect()
+        wlan.active(False)
+    esp32.wake_on_ext0(pin = specials["power"], level = esp32.WAKEUP_ANY_HIGH)
+    time.sleep(1)
+    
+    deepsleep()
     
 
 print("Initializaation complete")
@@ -383,39 +405,35 @@ def back_end():
 #         pass
 
 while True:
-#     try:
-    if specials["power"].value() == 0:
-        if current_app is not None: current_app.end()
-        print("going to sleep")
-        esp32.wake_on_ext0(pin = specials["power"], level = esp32.WAKEUP_ANY_HIGH)
-        time.sleep(1)
+    try:
+        if specials["power"].value() == 0:
+            sleep()
         
-        deepsleep()
+        front_end()
+        back_end()
+        
+        if switches["wifi"].value() == 0:
+            wlan.active(True)
+            wlan.config(pm=wlan.PM_NONE)
+            connect_wifi()
+        else:
+            wlan.active(False)
+            
+        bat_level = min(round(round((((bat_volt()-3.2)/(4.0 - 3.2))*100)/5)*5), 100)
+        
+        if bat_level <= 20:
+            sleep()
+        
+        time_list = Time(rtc.datetime())
+        if time_list.min % 30 == 0 and time_list.sec in [0, 1, 2]:
+            new_time()
+            print("Time has been calibrated")
     
-    front_end()
-    back_end()
-    
-    if switches["wifi"].value() == 0:
-        wlan.active(True)
-        connect_wifi()
-    else:
-        wlan.active(False)
-    
-    time_list = Time(rtc.datetime())
-    if time_list.min % 30 == 0 and time_list.sec in [0, 1, 2]:
-        new_time()
-        print("Time has been calibrated")
-    
-#     except Exception as e:
-#         if e is not KeyboardInterrupt:
-#             if current_app is not None: current_app.end()
-#             print
-#             print("going to sleep")
-#             esp32.wake_on_ext0(pin = specials["power"], level = esp32.WAKEUP_ANY_HIGH)
-#             time.sleep(1)
-#             
-#             deepsleep()
-
+    except Exception as e:
+        if current_app is not None: current_app.end()
+        if e is not KeyboardInterrupt:
+            sys.print_exception(e)
+            sleep()
 
 
 
