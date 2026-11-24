@@ -24,11 +24,6 @@ adc.atten(ADC.ATTN_11DB)
 def bat_volt():
     return (adc.read() / 4095.0) * 6.6
 
-bat_level = min(round(round((((bat_volt()-3.2)/(4.0 - 3.2))*100)/5)*5), 100)
-
-if bat_level <= 20:
-    sleep()
-
 #screen init
 lit = Pin(12, Pin.OUT)
 lit.value(1)
@@ -125,7 +120,8 @@ notif_queue = []
 pings = {}
 
 current_app = None
-start_time = time.ticks_ms()
+send_time = time.ticks_ms()
+ping_time = time.ticks_ms()
 
 def connect_wifi():
     if not wlan.isconnected():
@@ -149,8 +145,8 @@ def connect_wifi():
 try:
     if switches["wifi"].value() == 0:
         connect_wifi()
-except:
-    pass
+except Exception as e:
+    sys.print_exception(e)
 
 def new_time():
     try:
@@ -162,8 +158,8 @@ def new_time():
             tim = json.loads(response.text)
 
             rtc.init((tim["year"], tim["mon"], tim["mday"], tim["hour"], tim["min"], tim["sec"], 0, 0))
-    except:
-        pass
+    except Exception as e:
+        sys.print_exception(e)
 
 new_time()
 
@@ -184,6 +180,14 @@ def wifi_symbol(color):
 def color(r, g, b):
     return(TFTColor(b, r, g))
 
+def bat_danger():
+    bat_level = min(round(round((((bat_volt()-3.2)/(4.0 - 3.2))*100)/5)*5), 100)
+    
+    if bat_level < 20:
+        return color(255, 0, 0)
+    else:
+        return TFT.WHITE
+
 def top_bar():
     fb = FrameBuffer(bytearray(128*10*2), 128, 10, RGB565)
     time_list = list(rtc.datetime())
@@ -195,7 +199,7 @@ def top_bar():
 
     bat_level = min(round(round((((bat_volt()-3.2)/(4.0 - 3.2))*100)/5)*5), 100)
     
-    fb.text(str(bat_level) + "%", 95, 1, TFT.WHITE)
+    fb.text(str(bat_level) + "%", 95, 1, bat_danger())
 
     if wlan.isconnected(): color = TFT.BLUE
     else: color = TFT.GREEN
@@ -233,15 +237,20 @@ def cb(events):
         
         if events & SX1262.RX_DONE:
             msg, err = sx.recv()
-            print(msg)
+            #print("Received:", msg)
             message_in = bytes_message(msg)
             
             pings[message_in.sender] = message_in.connected
             
+            #print("Info:", message_in.__dict__)
+            
             if message_in.receiver in [DEVICE_ID, "00"]:
                 if message_in.kind == MSG_DIRECT:
+                    print(f"{message_in.sender} sent {message_in.text}")
                     message_out = Message(DEVICE_ID, MSG_CONFIRM, message_in.sender, "", wlan.isconnected() and RICK_MODE, "00", tim.tup(), message_in.ident, "")
                     sx.send(message_bytes(message_out))
+                    time.sleep_ms(10)
+                    #print("Sent:", message_bytes(message_out))
                     
                     message_in_queue[message_in.app].append(AppMessageIn(message_in.sender, message_in.text, message_in.tim))
                 elif message_in.kind == MSG_INTERNET:
@@ -249,13 +258,16 @@ def cb(events):
                 elif message_in.kind == MSG_PING:
                     message_out = Message(DEVICE_ID, MSG_CONFIRM, message_in.sender, "", wlan.isconnected() and RICK_MODE, "00", tim.tup(), message_in.ident, "")
                     sx.send(message_bytes(message_out))
+                    time.sleep_ms(10)
+                    #print("Sent:", message_bytes(message_out))
+                    
                 elif message_in.kind == MSG_CONFIRM:
                     for i in message_out_queue:
-                        if message.ident == i.ident:
+                        if message_in.ident == i.ident:
                             message_out_queue.remove(i)
                             break
-    except:
-        pass
+    except Exception as e:
+        sys.print_exception(e)
 sx.setBlockingCallback(False, cb)
 
 def rand_id():
@@ -354,6 +366,7 @@ def front_end():
             if i.kind == 0:
                 message = Message(DEVICE_ID, MSG_DIRECT, i.receiver, i.text, wlan.isconnected() and RICK_MODE, "00", tim.tup(), rand_id(), current_app.name)
                 sx.send(message_bytes(message))
+                time.sleep_ms(10)
             else:
                 message_out_queue.append(SecondaryMessage(i.receiver, i.text, tim.tup(), rand_id(), current_app.name))
         
@@ -376,31 +389,44 @@ def front_end():
 
 def back_end():
     #try:
-    global start_time
+    global send_time
+    global ping_time
     global pings
     
     tim = Time(rtc.datetime())
     
-    if time.ticks_diff(time.ticks_ms(), start_time) >= 5000:
-        start_time = time.ticks_ms()
+    if time.ticks_diff(time.ticks_ms(), send_time) >= 5000:
+        send_time = time.ticks_ms()
         
         #persistent messages
+        #print(pings)
+        #print(message_out_queue)
     
         for i in message_out_queue:
-            if i.receiver in pings:
+            #print(i.receiver, i.receiver in pings.keys())
+            
+            if i.receiver in pings.keys():
                 message = Message(DEVICE_ID, MSG_DIRECT, i.receiver, i.text, wlan.isconnected() and RICK_MODE, "00", i.tim, i.ident, i.app)
                 sx.send(message_bytes(message))
+                time.sleep_ms(10)
+                #print("Sent:", message_bytes(message))
             else:
                 for key, value in pings.items():
                     if value == True:
                         message = Message(DEVICE_ID, MSG_INTERNET, i.receiver, i.text, wlan.isconnected() and RICK_MODE, key, i.tim, i.ident, i.app)
                         sx.send(message_bytes(message))
+                        time.sleep_ms(10)
                         break
+    
+    if time.ticks_diff(time.ticks_ms(), ping_time) >= 7499:
+        ping_time = time.ticks_ms()
         
         #pings
         pings = {}
         message = Message(DEVICE_ID, MSG_PING, "00", "", wlan.isconnected() and RICK_MODE, "00", tim.tup(), rand_id(), "")
         sx.send(message_bytes(message))
+        time.sleep_ms(10)
+        #print("Sent:", message_bytes(message))
 #     except:
 #         pass
 
@@ -418,11 +444,6 @@ while True:
             connect_wifi()
         else:
             wlan.active(False)
-            
-        bat_level = min(round(round((((bat_volt()-3.2)/(4.0 - 3.2))*100)/5)*5), 100)
-        
-        if bat_level <= 20:
-            sleep()
         
         time_list = Time(rtc.datetime())
         if time_list.min % 30 == 0 and time_list.sec in [0, 1, 2]:
@@ -434,7 +455,6 @@ while True:
         if e is not KeyboardInterrupt:
             sys.print_exception(e)
             sleep()
-
 
 
 
