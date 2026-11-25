@@ -103,6 +103,9 @@ for i in app_names:
 with open("/apps/settings_id.txt", "r") as file:
     DEVICE_ID = file.read()
 
+with open("main_aio_key.txt", "r") as file:
+    AIO_KEY = file.read()
+
 APP_ORIGIN_CORDS = [(9, 18), (48, 18), (87, 18),
                     (9, 56), (48, 56), (87, 56),
                     (9, 94), (48, 94), (87, 94),
@@ -122,6 +125,7 @@ pings = {}
 current_app = None
 send_time = time.ticks_ms()
 ping_time = time.ticks_ms()
+tx_done = True
 
 def connect_wifi():
     if not wlan.isconnected():
@@ -151,10 +155,7 @@ except Exception as e:
 def new_time():
     try:
         if wlan.isconnected():
-            with open("main_aio_key.txt", "r") as file:
-                key = file.read()
-            
-            response = urq.get("https://io.adafruit.com/api/v2/Robert22G/integrations/time/struct", headers = {"tz": "America/New_York", "X-AIO-KEY": key})
+            response = urq.get("https://io.adafruit.com/api/v2/Robert22G/integrations/time/struct", headers = {"tz": "America/New_York", "X-AIO-KEY": AIO_KEY})
             tim = json.loads(response.text)
 
             rtc.init((tim["year"], tim["mon"], tim["mday"], tim["hour"], tim["min"], tim["sec"], 0, 0))
@@ -233,41 +234,72 @@ def notif_bar(app, text):
 
 def cb(events):
     try:
+        global tx_done
+        
         tim = Time(rtc.datetime())
         
         if events & SX1262.RX_DONE:
             msg, err = sx.recv()
-            #print("Received:", msg)
-            message_in = bytes_message(msg)
+            try:
+                message_in = bytes_message(msg)
+            except:
+                print("Error:", msg)
+                return
             
-            pings[message_in.sender] = message_in.connected
+            if message_in.kind in [MSG_DIRECT, MSG_PING, MSG_CONFIRM]:
+                pings[message_in.sender] = message_in.connected
             
-            #print("Info:", message_in.__dict__)
+            elif message_in.kind == MSG_INTERNET:
+                pings[message_in.inter] = message_in.connected
             
             if message_in.receiver in [DEVICE_ID, "00"]:
                 if message_in.kind == MSG_DIRECT:
-                    print(f"{message_in.sender} sent {message_in.text}")
-                    message_out = Message(DEVICE_ID, MSG_CONFIRM, message_in.sender, "", wlan.isconnected() and RICK_MODE, "00", tim.tup(), message_in.ident, "")
-                    sx.send(message_bytes(message_out))
-                    time.sleep_ms(10)
-                    #print("Sent:", message_bytes(message_out))
+                    message_out = Message(DEVICE_ID, MSG_CONFIRM, message_in.sender, " ", wlan.isconnected() and RICK_MODE, "00", tim.tup(), message_in.ident, " ")
+                    if tx_done:
+                        tx_done = False
+                        sx.send(message_bytes(message_out))
+                        
+                    print(f"Received a message from {i.sender} saying {i.text} directly")
                     
                     message_in_queue[message_in.app].append(AppMessageIn(message_in.sender, message_in.text, message_in.tim))
                 elif message_in.kind == MSG_INTERNET:
                     pass
                 elif message_in.kind == MSG_PING:
-                    message_out = Message(DEVICE_ID, MSG_CONFIRM, message_in.sender, "", wlan.isconnected() and RICK_MODE, "00", tim.tup(), message_in.ident, "")
-                    sx.send(message_bytes(message_out))
-                    time.sleep_ms(10)
-                    #print("Sent:", message_bytes(message_out))
+                    message_out = Message(DEVICE_ID, MSG_CONFIRM, message_in.sender, " ", wlan.isconnected() and RICK_MODE, "00", tim.tup(), message_in.ident, " ")
+                    if tx_done:
+                        tx_done = False
+                        sx.send(message_bytes(message_out))
                     
                 elif message_in.kind == MSG_CONFIRM:
                     for i in message_out_queue:
                         if message_in.ident == i.ident:
                             message_out_queue.remove(i)
-                            break
+                            return                    
+                    
+                    if wlan.isconnected():
+                        aio_messages = get_aio()
+                        for i in aio_messages:
+                            if message_in.ident == i.ident1 and message_in.sender == i.receiver:
+                                delete_aio(i.ident2)
+                                print(f"Deleted a message from {i.sender} to {i.receiver}")
+                                return
+            
+            if message_in.inter == DEVICE_ID:
+                if message_in.kind == MSG_INTERNET and wlan.isconnected():
+                    post_aio(message_in.sender, message_in.receiver, message_in.text, message_in.ident)
+                    print(f"Posted a message from {message_in.sender} to {message_in.receiver}")
+                    message_out = Message(DEVICE_ID, MSG_CONFIRM, message_in.sender, " ", wlan.isconnected() and RICK_MODE, "00", tim.tup(), message_in.ident, " ")
+                    if tx_done:
+                        tx_done = False
+                        sx.send(message_bytes(message_out))
+                        
+        
+        if events & SX1262.TX_DONE:
+            tx_done = True
+                
     except Exception as e:
         sys.print_exception(e)
+
 sx.setBlockingCallback(False, cb)
 
 def rand_id():
@@ -290,7 +322,32 @@ def sleep():
     time.sleep(1)
     
     deepsleep()
+
+def get_aio():
+    response = urq.get("https://io.adafruit.com/api/v2/Robert22G/feeds/messages/data", headers = {"X-AIO-KEY": AIO_KEY})
+    json_text = json.loads(response.text)
+    response.close()
+    new_json = []
+    for i in json_text:
+        value = i["value"]
+        sender = value[:2]
+        receiver = value[2:4]
+        ident1 = value[4:12]
+        text = value[12:]
+        ident2 = i["id"]
+        tim = iso_time(i["created_at"])
+        new_json.append(AIOMessage(sender, receiver, text, ident1, ident2, tim))
     
+    return new_json
+
+def post_aio(sender, receiver, text, ident):
+    value = sender + receiver + ident + text
+    response = urq.post("https://io.adafruit.com/api/v2/Robert22G/feeds/messages/data", headers = {"X-AIO-KEY": AIO_KEY}, json = {"value": value})
+    response.close()
+
+def delete_aio(ident):
+    response = urq.delete(f"https://io.adafruit.com/api/v2/Robert22G/feeds/messages/data/{ident}", headers = {"X-AIO-KEY": AIO_KEY})
+    response.close()
 
 print("Initializaation complete")
 
@@ -298,6 +355,7 @@ def front_end():
 #     try:
     global current_app
     global fb
+    global tx_done
     
     tim = Time(rtc.datetime())
     
@@ -365,8 +423,12 @@ def front_end():
         for i in messages:
             if i.kind == 0:
                 message = Message(DEVICE_ID, MSG_DIRECT, i.receiver, i.text, wlan.isconnected() and RICK_MODE, "00", tim.tup(), rand_id(), current_app.name)
-                sx.send(message_bytes(message))
-                time.sleep_ms(10)
+                if tx_done:
+                    tx_done = False
+                    sx.send(message_bytes(message))
+                
+                    print(f"Sent {i.text} to {i.receiver} with a direct message")
+                    
             else:
                 message_out_queue.append(SecondaryMessage(i.receiver, i.text, tim.tup(), rand_id(), current_app.name))
         
@@ -392,43 +454,66 @@ def back_end():
     global send_time
     global ping_time
     global pings
+    global tx_done
     
     tim = Time(rtc.datetime())
     
     if time.ticks_diff(time.ticks_ms(), send_time) >= 5000:
         send_time = time.ticks_ms()
+        pops = []
         
         #persistent messages
-        #print(pings)
-        #print(message_out_queue)
     
         for i in message_out_queue:
-            #print(i.receiver, i.receiver in pings.keys())
-            
             if i.receiver in pings.keys():
                 message = Message(DEVICE_ID, MSG_DIRECT, i.receiver, i.text, wlan.isconnected() and RICK_MODE, "00", i.tim, i.ident, i.app)
-                sx.send(message_bytes(message))
-                time.sleep_ms(10)
-                #print("Sent:", message_bytes(message))
+                if tx_done:
+                    tx_done = False
+                    sx.send(message_bytes(message))
+                
+                    print(f"Sent {i.text} to {i.receiver} with a direct message")
+            
+            elif wlan.isconnected():
+                post_aio(DEVICE_ID, i.receiver, i.text, i.ident)
+                pops.append(i)
+                print(f"Sent {i.text} to {i.receiver} with wifi")
+            
             else:
                 for key, value in pings.items():
                     if value == True:
                         message = Message(DEVICE_ID, MSG_INTERNET, i.receiver, i.text, wlan.isconnected() and RICK_MODE, key, i.tim, i.ident, i.app)
+                        if tx_done:
+                            tx_done = False
+                            sx.send(message_bytes(message))
+                            
+                        i.inter = key
+        
+        for i in pops:
+            message_out_queue.remove(i)
+        
+        #rick send
+        
+        if wlan.isconnected():
+            aio_messages = get_aio()
+            for i in aio_messages:
+                if i.receiver in pings.keys():
+                    message = Message(i.sender, MSG_INTERNET, i.receiver, i.text, wlan.isconnected() and RICK_MODE, DEVICE_ID, i.tim.tup(), i.ident1, "Messenger")
+                    if tx_done:
+                        tx_done = False
                         sx.send(message_bytes(message))
-                        time.sleep_ms(10)
-                        break
+                    
+                        print(f"Forwarded a message from {i.sender} to {i.receiver}")
+                        
     
     if time.ticks_diff(time.ticks_ms(), ping_time) >= 7499:
         ping_time = time.ticks_ms()
         
         #pings
         pings = {}
-        message = Message(DEVICE_ID, MSG_PING, "00", "", wlan.isconnected() and RICK_MODE, "00", tim.tup(), rand_id(), "")
-        sx.send(message_bytes(message))
-        time.sleep_ms(10)
-        #print("Sent:", message_bytes(message))
-#     except:
-#         pass
+        message = Message(DEVICE_ID, MSG_PING, "00", " ", wlan.isconnected() and RICK_MODE, "00", tim.tup(), rand_id(), " ")
+        if tx_done:
+            tx_done = False
+            sx.send(message_bytes(message))
 
 while True:
     try:
@@ -455,6 +540,7 @@ while True:
         if e is not KeyboardInterrupt:
             sys.print_exception(e)
             sleep()
+
 
 
 
