@@ -140,7 +140,7 @@ class Messenger:
                     option -= 1
             
         if option == 2:
-            receiver = convert(menu[0])[0]
+            receiver = convert(menu[0])[0].upper()
             text = convert(menu[1])[0]
             
             messages.append(AppMessageOut(receiver, text, 1))
@@ -148,8 +148,6 @@ class Messenger:
             Sending.send()
             menu = ["", ""]
             option = 0
-            
-            print(f"Sent {text} to {receiver}")
         
         fb.fill(TFT.BLACK)
         fb.text("Messenger", 64 - 4*len("Messenger"), 20, TFT.WHITE)
