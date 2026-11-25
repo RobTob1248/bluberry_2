@@ -4,6 +4,15 @@ from ST7735 import TFTColor
 def color(r, g, b):
     return(TFTColor(b, r, g))
 
+class AIOMessage:
+    def __init__(self, sender, receiver, text, ident1, ident2, tim):
+        self.sender = sender
+        self.receiver = receiver
+        self.text = text
+        self.ident1 = ident1
+        self.ident2 = ident2
+        self.tim = tim
+
 class BluberryApp:
     name = ""
     icon = [[(0, 0, 0) for _ in range(30)] for _ in range(30)]
@@ -57,12 +66,13 @@ class AppMessageIn:
         self.tim = tim
 
 class SecondaryMessage:
-    def __init__(self, receiver, text, tim, ident, app):
+    def __init__(self, receiver, text, tim, ident, app, inter = "00"):
         self.receiver = receiver
         self.text = text
         self.tim = tim
         self.ident = ident
         self.app = app
+        self.inter = inter
 
 def message_bytes(message: Message):
     bools = {True: "T", False: "F", None: "N"}
@@ -109,7 +119,15 @@ def bytes_message(old_text: bytes):
     
     return Message(**message)
     
+def iso_time(iso):
+    year = int(iso[:4])
+    month = int(iso[5:7])
+    day = int(iso[8:10])
+    hour = int(iso[11:13])
+    minute = int(iso[14:16])
+    second = int(iso[17:19])
     
+    return Time((year, month, day, 0, hour, minute, second, 0))
 
 class KeypadButton:
     def __init__(self, keypad, key):
@@ -167,3 +185,4 @@ class AppReturn:
         self.fb = fb
         self.messages = messages
         self.buzz = buzz
+
