@@ -41,7 +41,7 @@ fb = FrameBuffer(buf, 128, 160, RGB565)
 #radio init
 sx = SX1262(spi_bus=2, clk=5, mosi=6, miso=3, cs=7, irq=33, rst=8, gpio=34)
 sx.begin(freq=915, bw=500.0, sf=12, cr=8, syncWord=0x12,
-         power=20, currentLimit=60.0, preambleLength=8,
+         power=17, currentLimit=95.0, preambleLength=8,
          implicit=False, implicitLen=0xFF,
          crcOn=True, txIq=False, rxIq=False,
          tcxoVoltage=1.7, useRegulatorLDO=False, blocking=True)
@@ -126,6 +126,8 @@ current_app = None
 send_time = time.ticks_ms()
 ping_time = time.ticks_ms()
 tx_done = True
+
+idm = IDManager()
 
 def connect_wifi():
     if not wlan.isconnected():
@@ -258,12 +260,28 @@ def cb(events):
                     if tx_done:
                         tx_done = False
                         sx.send(message_bytes(message_out))
-                        
-                    print(f"Received a message from {i.sender} saying {i.text} directly")
                     
-                    message_in_queue[message_in.app].append(AppMessageIn(message_in.sender, message_in.text, message_in.tim))
+                    
+                    if not idm.has(message_in.ident):
+                        print(f"Received a message from {message_in.sender} saying {message_in.text} directly")
+                        
+                        message_in_queue[message_in.app].append(AppMessageIn(message_in.sender, message_in.text, message_in.tim))
+                    
+                    idm.new(message_in.ident)
+                    
                 elif message_in.kind == MSG_INTERNET:
-                    pass
+                    message_out = Message(DEVICE_ID, MSG_CONFIRM, message_in.inter, " ", wlan.isconnected() and RICK_MODE, "00", tim.tup(), message_in.ident, " ")
+                    if tx_done:
+                        tx_done = False
+                        sx.send(message_bytes(message_out))
+                   
+                    if not idm.has(message_in.ident):
+                        print(f"Received a message from {message_in.sender} saying {message_in.text} through {message_in.inter}")
+                        
+                        message_in_queue[message_in.app].append(AppMessageIn(message_in.sender, message_in.text, message_in.tim))
+                    
+                    idm.new(message_in.ident)
+                    
                 elif message_in.kind == MSG_PING:
                     message_out = Message(DEVICE_ID, MSG_CONFIRM, message_in.sender, " ", wlan.isconnected() and RICK_MODE, "00", tim.tup(), message_in.ident, " ")
                     if tx_done:
@@ -284,16 +302,19 @@ def cb(events):
                                 print(f"Deleted a message from {i.sender} to {i.receiver}")
                                 return
             
-            if message_in.inter == DEVICE_ID:
+            elif message_in.inter == DEVICE_ID:
                 if message_in.kind == MSG_INTERNET and wlan.isconnected():
-                    post_aio(message_in.sender, message_in.receiver, message_in.text, message_in.ident)
-                    print(f"Posted a message from {message_in.sender} to {message_in.receiver}")
                     message_out = Message(DEVICE_ID, MSG_CONFIRM, message_in.sender, " ", wlan.isconnected() and RICK_MODE, "00", tim.tup(), message_in.ident, " ")
                     if tx_done:
                         tx_done = False
                         sx.send(message_bytes(message_out))
                         
-        
+                    if not idm.has(message_in.ident):
+                        post_aio(message_in.sender, message_in.receiver, message_in.text, message_in.ident)
+                        print(f"Posted a message from {message_in.sender} to {message_in.receiver}")
+                      
+                    idm.new(message_in.ident)
+                    
         if events & SX1262.TX_DONE:
             tx_done = True
                 
@@ -485,16 +506,28 @@ def back_end():
                         if tx_done:
                             tx_done = False
                             sx.send(message_bytes(message))
+                            print(f"Sent {i.text} to {i.receiver} with through {i.inter}")
                             
                         i.inter = key
         
         for i in pops:
             message_out_queue.remove(i)
-        
-        #rick send
+            
+        #wifi receive
         
         if wlan.isconnected():
             aio_messages = get_aio()
+        
+            for i in aio_messages:
+                if i.receiver == DEVICE_ID:
+                    delete_aio(i.ident2)
+                    message_in_queue["Messenger"].append(AppMessageIn(i.sender, i.text, i.tim))
+                    
+                    print(f"Received a message from {i.sender} saying {i.text} with wifi")
+        
+        
+            #rick send
+        
             for i in aio_messages:
                 if i.receiver in pings.keys():
                     message = Message(i.sender, MSG_INTERNET, i.receiver, i.text, wlan.isconnected() and RICK_MODE, DEVICE_ID, i.tim.tup(), i.ident1, "Messenger")
