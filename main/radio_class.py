@@ -1,8 +1,47 @@
 import json
 from ST7735 import TFTColor
 
+class IDManager:
+    def __init__(self):
+        self.ids = ["" for _ in range(50)]
+    
+    def new(self, ident):
+        if not self.has(ident):
+            self.ids.append(ident)
+            self.ids.pop(0)
+    
+    def has(self, ident):
+        return ident in self.ids
+
 def color(r, g, b):
     return(TFTColor(b, r, g))
+
+def month_len(month, year):
+    lens = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+    if year % 4 == 0:
+        lens[1] += 1
+
+    return lens[month]
+
+def subtract_hour(year, month, day, hour, minute, second, diff):
+    hour -= diff
+
+    if hour < 0:
+        day -= 1
+        hour += 24
+    
+        if day <= 0:
+            month -= 1
+
+            if month <= 0:
+                year -= 1
+                month += 12
+                
+            
+            day += month_len(month, year)
+    
+    return (year, month, day, hour, minute, second)
 
 class AIOMessage:
     def __init__(self, sender, receiver, text, ident1, ident2, tim):
@@ -126,6 +165,8 @@ def iso_time(iso):
     hour = int(iso[11:13])
     minute = int(iso[14:16])
     second = int(iso[17:19])
+    
+    year, month, day, hour, minute, second = subtract_hour(year, month, day, hour, minute, second, 5)
     
     return Time((year, month, day, 0, hour, minute, second, 0))
 
